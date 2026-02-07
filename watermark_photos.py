@@ -3,7 +3,7 @@ import csv
 import argparse
 import ssl
 import certifi
-from PIL import Image, ImageDraw, ImageFont, ExifTags
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ExifTags
 from datetime import datetime
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
@@ -90,6 +90,10 @@ def get_exif_data(image_path):
 
         if not exif_dict:
             return None, None
+
+        # Physically rotate pixels to match EXIF orientation so the
+        # watermark is placed correctly and the saved image isn't sideways.
+        image = ImageOps.exif_transpose(image)
 
         return exif_dict, image
     except Exception:
