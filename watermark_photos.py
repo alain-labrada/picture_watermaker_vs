@@ -22,75 +22,190 @@ except:
     ctx.verify_mode = ssl.CERT_NONE
 
 def get_exif_data(image_path):
-    """Extract EXIF data from image."""
+    """Extract EXIF data from image, handling both iPhone and Samsung formats.
+
+    Uses Pillow's public getexif() API with IFD sub-access (works with HEIC,
+    Samsung JPEG, etc.) and falls back to _getexif() for older formats.
+    """
     try:
         image = Image.open(image_path)
-        exif_data = image._getexif()
-        
-        if not exif_data:
+        exif_dict = {}
+        gps_info = {}
+
+        # Method 1: Public getexif() API (works with HEIC and modern formats)
+        try:
+            exif_obj = image.getexif()
+            if exif_obj:
+                # Main EXIF tags (DateTime, Make, Model, etc.)
+                for tag_id, value in exif_obj.items():
+                    tag_name = ExifTags.TAGS.get(tag_id, tag_id)
+                    exif_dict[tag_name] = value
+
+                # Exif sub-IFD (DateTimeOriginal, DateTimeDigitized, etc.)
+                try:
+                    exif_ifd = exif_obj.get_ifd(ExifTags.IFD.Exif)
+                    for tag_id, value in exif_ifd.items():
+                        tag_name = ExifTags.TAGS.get(tag_id, tag_id)
+                        exif_dict[tag_name] = value
+                except (AttributeError, KeyError):
+                    pass
+
+                # GPS sub-IFD
+                try:
+                    gps_ifd = exif_obj.get_ifd(ExifTags.IFD.GPSInfo)
+                    for tag_id, value in gps_ifd.items():
+                        tag_name = ExifTags.GPSTAGS.get(tag_id, tag_id)
+                        gps_info[tag_name] = value
+                        gps_info[tag_id] = value  # keep integer key too
+                except (AttributeError, KeyError):
+                    pass
+        except Exception:
+            pass
+
+        # Method 2: Fall back to _getexif() (older JPEG handling)
+        if not exif_dict:
+            try:
+                raw_exif = image._getexif()
+                if raw_exif:
+                    for tag_id, value in raw_exif.items():
+                        tag_name = ExifTags.TAGS.get(tag_id, tag_id)
+                        exif_dict[tag_name] = value
+            except Exception:
+                pass
+
+        # Extract GPS from the GPSInfo tag if IFD method didn't find it
+        if not gps_info and 'GPSInfo' in exif_dict:
+            raw_gps = exif_dict['GPSInfo']
+            if isinstance(raw_gps, dict):
+                for tag_id, value in raw_gps.items():
+                    if isinstance(tag_id, int):
+                        tag_name = ExifTags.GPSTAGS.get(tag_id, tag_id)
+                        gps_info[tag_name] = value
+                        gps_info[tag_id] = value
+                    else:
+                        gps_info[tag_id] = value
+
+        if gps_info:
+            exif_dict['GPSInfo'] = gps_info
+
+        if not exif_dict:
             return None, None
-        
-        exif = {
-            ExifTags.TAGS[k]: v
-            for k, v in exif_data.items()
-            if k in ExifTags.TAGS
-        }
-        
-        return exif, image
+
+        return exif_dict, image
     except Exception:
         return None, None
 
 def get_year_from_exif(exif):
-    """Extract year from EXIF data."""
+    """Extract year from EXIF data, handling iPhone and Samsung formats.
+
+    Handles: standard strings, bytes values (some Samsung), null-byte padding,
+    and timezone offsets (e.g. "2025:01:15 10:30:00+09:00").
+    """
     if not exif:
         return None
-    
-    # Try different date fields
+
     date_fields = ['DateTimeOriginal', 'DateTime', 'DateTimeDigitized']
-    
+
     for field in date_fields:
         if field in exif:
             try:
                 date_str = exif[field]
-                # Format is usually "YYYY:MM:DD HH:MM:SS"
-                year = int(date_str.split(':')[0])
-                return year
+                # Samsung may encode date as bytes
+                if isinstance(date_str, bytes):
+                    date_str = date_str.decode('ascii', errors='ignore')
+                if not isinstance(date_str, str):
+                    continue
+                # Strip null bytes and whitespace
+                date_str = date_str.strip().strip('\x00')
+                if not date_str:
+                    continue
+                # Extract first 4 characters as year
+                # Works for "YYYY:MM:DD ...", "YYYY-MM-DD ...", "YYYY:MM:DD ...+TZ"
+                year = int(date_str[:4])
+                if 1900 <= year <= 2100:
+                    return year
             except Exception:
                 continue
-    
+
     return None
 
 def get_gps_coordinates(exif):
-    """Extract GPS coordinates from EXIF data."""
+    """Extract GPS coordinates from EXIF data, handling iPhone and Samsung formats.
+
+    Handles: IFDRational objects (iPhone), (numerator, denominator) tuples (Samsung),
+    plain floats, both string keys (from IFD) and integer keys (from _getexif),
+    and bytes-encoded reference values.
+    """
     if not exif or 'GPSInfo' not in exif:
         return None, None
-    
+
     gps_info = exif['GPSInfo']
-    
+
+    def to_float(value):
+        """Convert various GPS component types to float."""
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, tuple) and len(value) == 2:
+            # (numerator, denominator) rational format (some Samsung models)
+            num, den = value
+            return float(num) / float(den) if den != 0 else 0.0
+        # IFDRational or other numeric types that support float()
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
     def convert_to_degrees(value):
-        """Convert GPS coordinates to degrees."""
-        d, m, s = value
-        return d + (m / 60.0) + (s / 3600.0)
-    
+        """Convert GPS coordinates to decimal degrees, handling multiple formats."""
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        if isinstance(value, (list, tuple)):
+            if len(value) == 3:
+                # Standard (degrees, minutes, seconds) format
+                d = to_float(value[0])
+                m = to_float(value[1])
+                s = to_float(value[2])
+                return d + (m / 60.0) + (s / 3600.0)
+            elif len(value) == 2:
+                # (degrees, minutes) format — no seconds
+                d = to_float(value[0])
+                m = to_float(value[1])
+                return d + (m / 60.0)
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def get_ref(value):
+        """Normalize a GPS reference value (N/S/E/W) to a string."""
+        if isinstance(value, bytes):
+            return value.decode('ascii', errors='ignore').strip('\x00').strip()
+        if isinstance(value, str):
+            return value.strip()
+        return str(value).strip() if value else ''
+
     try:
-        gps_latitude = gps_info.get(2)
-        gps_latitude_ref = gps_info.get(1)
-        gps_longitude = gps_info.get(4)
-        gps_longitude_ref = gps_info.get(3)
-        
+        # Try both string keys (from IFD access) and integer keys (from _getexif)
+        gps_latitude = gps_info.get('GPSLatitude') or gps_info.get(2)
+        gps_latitude_ref = gps_info.get('GPSLatitudeRef') or gps_info.get(1)
+        gps_longitude = gps_info.get('GPSLongitude') or gps_info.get(4)
+        gps_longitude_ref = gps_info.get('GPSLongitudeRef') or gps_info.get(3)
+
         if gps_latitude and gps_longitude:
             lat = convert_to_degrees(gps_latitude)
-            if gps_latitude_ref == 'S':
-                lat = -lat
-            
             lon = convert_to_degrees(gps_longitude)
-            if gps_longitude_ref == 'W':
-                lon = -lon
-            
-            return lat, lon
+
+            if lat is not None and lon is not None:
+                if get_ref(gps_latitude_ref) == 'S':
+                    lat = -lat
+                if get_ref(gps_longitude_ref) == 'W':
+                    lon = -lon
+                return lat, lon
     except Exception:
         pass
-    
+
     return None, None
 
 def get_city_from_coordinates(lat, lon):
