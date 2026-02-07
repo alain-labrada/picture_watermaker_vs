@@ -28,7 +28,7 @@ def get_exif_data(image_path):
         exif_data = image._getexif()
         
         if not exif_data:
-            return None, None, None
+            return None, None
         
         exif = {
             ExifTags.TAGS[k]: v
@@ -128,43 +128,50 @@ def get_city_from_coordinates(lat, lon):
     
     return None
 
-def load_locations(locations_file):
-    """Load locations from CSV file."""
+def load_locations_with_coordinates(locations_file):
+    """Load locations from CSV file and geocode them once.
+    Returns: list of tuples (year, location_name, lat, lon)"""
     locations = []
+    geolocator = Nominatim(user_agent="photo_watermark_app", timeout=10, ssl_context=ctx)
+    
+    print("Loading and geocoding locations from file...")
+    
     try:
         with open(locations_file, 'r') as f:
             reader = csv.reader(f)
             for row in reader:
                 if len(row) >= 2:
                     year = int(row[0].strip())
-                    location = row[1].strip()
-                    locations.append((year, location))
-    except Exception:
-        pass
+                    location_name = row[1].strip()
+                    
+                    # Geocode the location
+                    try:
+                        time.sleep(1.5)  # Rate limiting
+                        location = geolocator.geocode(location_name)
+                        if location:
+                            lat, lon = location.latitude, location.longitude
+                            locations.append((year, location_name, lat, lon))
+                            print(f"  ✓ {year}, {location_name}: {lat:.4f}, {lon:.4f}")
+                        else:
+                            print(f"  ⚠ Could not geocode: {year}, {location_name}")
+                            locations.append((year, location_name, None, None))
+                    except Exception as e:
+                        print(f"  ⚠ Error geocoding {location_name}: {e}")
+                        locations.append((year, location_name, None, None))
+    except Exception as e:
+        print(f"Error reading locations file: {e}")
     
     return locations
 
-def get_coordinates_for_city(city_name):
-    """Get coordinates for a city name."""
-    try:
-        geolocator = Nominatim(user_agent="photo_watermark_app", timeout=10, ssl_context=ctx)
-        time.sleep(1.5)
-        location = geolocator.geocode(city_name)
-        if location:
-            return location.latitude, location.longitude
-    except Exception:
-        pass
-    
-    return None, None
-
-def find_closest_location(year, photo_city, photo_coords, locations, verbose=False):
+def find_closest_location(year, photo_coords, locations, verbose=False):
     """Find the closest location from locations.txt based on year and proximity.
-    Returns tuple: (location_name, distance_km) or (None, None)"""
-    if not year or not locations:
+    Returns tuple: (location_name, distance_km) or (None, None)
+    locations: list of tuples (year, location_name, lat, lon)"""
+    if not year or not locations or not photo_coords or photo_coords[0] is None:
         return None, None
     
     # Filter locations by year
-    year_matches = [loc for yr, loc in locations if yr == year]
+    year_matches = [(name, lat, lon) for yr, name, lat, lon in locations if yr == year]
     
     if not year_matches:
         return None, None
@@ -172,37 +179,35 @@ def find_closest_location(year, photo_city, photo_coords, locations, verbose=Fal
     # If only one match, return it
     if len(year_matches) == 1:
         if verbose:
-            print(f"  → Only one location for {year}: {year_matches[0]}")
-        return year_matches[0], None
+            print(f"  → Only one location for {year}: {year_matches[0][0]}")
+        return year_matches[0][0], None
     
-    # If we have photo coordinates, find the closest location
-    if photo_coords and photo_coords[0] is not None:
-        photo_lat, photo_lon = photo_coords
-        min_distance = float('inf')
-        closest_location = None
-        
-        if verbose:
-            print(f"  → Checking {len(year_matches)} locations for proximity...")
-        
-        for location_name in year_matches:
-            loc_coords = get_coordinates_for_city(location_name)
-            if loc_coords and loc_coords[0] is not None:
-                distance = geodesic(photo_coords, loc_coords).kilometers
-                if verbose:
-                    print(f"     {location_name}: {distance:.1f} km")
-                if distance < min_distance:
-                    min_distance = distance
-                    closest_location = location_name
-        
-        if closest_location:
+    # Find the closest location by distance
+    photo_lat, photo_lon = photo_coords
+    min_distance = float('inf')
+    closest_location = None
+    
+    if verbose:
+        print(f"  → Checking {len(year_matches)} locations for proximity...")
+    
+    for location_name, loc_lat, loc_lon in year_matches:
+        if loc_lat is not None and loc_lon is not None:
+            distance = geodesic(photo_coords, (loc_lat, loc_lon)).kilometers
             if verbose:
-                print(f"  → Closest: {closest_location} ({min_distance:.1f} km)")
-            return closest_location, min_distance
+                print(f"     {location_name}: {distance:.1f} km")
+            if distance < min_distance:
+                min_distance = distance
+                closest_location = location_name
+    
+    if closest_location:
+        if verbose:
+            print(f"  → Closest: {closest_location} ({min_distance:.1f} km)")
+        return closest_location, min_distance
     
     # If we can't determine by distance, return the first match
     if verbose:
-        print(f"  → Using first match for {year}: {year_matches[0]}")
-    return year_matches[0], None
+        print(f"  → Using first match for {year}: {year_matches[0][0]}")
+    return year_matches[0][0], None
 
 def add_watermark(image, text, position='bottom-left'):
     """Add watermark text with white letters, black outline, and shadow."""
@@ -255,8 +260,9 @@ def process_images(input_folder, output_folder, locations_file):
         os.makedirs(output_folder)
         print(f"✓ Created output folder: {output_folder}\n")
     
-    locations = load_locations(locations_file)
-    print(f"✓ Loaded {len(locations)} location entries from {locations_file}\n")
+    # Load and geocode all locations once
+    locations = load_locations_with_coordinates(locations_file)
+    print(f"\n✓ Loaded {len(locations)} location entries\n")
     
     # Supported image formats
     image_extensions = ('.jpg', '.jpeg', '.png', '.tif', '.tiff', '.heic', '.heif')
@@ -322,7 +328,7 @@ def process_images(input_folder, output_folder, locations_file):
             matched_location = None
             distance_km = None
             if lat and lon:
-                matched_location, distance_km = find_closest_location(year, city, (lat, lon), locations, verbose=True)
+                matched_location, distance_km = find_closest_location(year, (lat, lon), locations, verbose=True)
             
             # Determine label: use location from file if < 100km, otherwise use GPS city
             if matched_location and distance_km is not None and distance_km > 100:
@@ -427,6 +433,7 @@ Examples:
     print(f"Output folder: {output_folder}")
     print(f"Locations file: {locations_file}")
     print("\nStarting photo watermarking process...")
+    print("=" * 70 + "\n")
     
     process_images(input_folder, output_folder, locations_file)
     print("\nProcessing complete!")
