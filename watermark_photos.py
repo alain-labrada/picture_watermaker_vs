@@ -247,6 +247,22 @@ def get_city_from_coordinates(lat, lon):
     
     return None
 
+def load_filename_locations(filename_locations_file):
+    """Load filename-to-location mappings from CSV file.
+    Returns: dict mapping filename -> location_name"""
+    mappings = {}
+    try:
+        with open(filename_locations_file, 'r') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) >= 2:
+                    fname = row[0].strip()
+                    location = row[1].strip()
+                    mappings[fname] = location
+    except Exception as e:
+        print(f"Error reading filename locations file: {e}")
+    return mappings
+
 def load_locations_with_coordinates(locations_file):
     """Load locations from CSV file and geocode them once.
     Returns: list of tuples (year, location_name, lat, lon)"""
@@ -358,8 +374,8 @@ def add_watermark(image, text, position='bottom-left'):
         y = image.height - text_height - margin - 10
     
     # Draw shadow (offset)
-    shadow_offset = 5
-    draw.text((x + shadow_offset, y + shadow_offset), text, font=font, fill='black')
+    # shadow_offset = 5
+    # draw.text((x + shadow_offset, y + shadow_offset), text, font=font, fill='black')
     
     # Draw outline (black)
     outline_range = 4
@@ -373,12 +389,18 @@ def add_watermark(image, text, position='bottom-left'):
     
     return image
 
-def process_images(input_folder, output_folder, locations_file):
+def process_images(input_folder, output_folder, locations_file, filename_locations_file=None):
     """Process all images in the input folder."""
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
         print(f"✓ Created output folder: {output_folder}\n")
-    
+
+    # Load filename-to-location overrides
+    filename_locations = {}
+    if filename_locations_file:
+        filename_locations = load_filename_locations(filename_locations_file)
+        print(f"✓ Loaded {len(filename_locations)} filename location override(s)\n")
+
     # Load and geocode all locations once
     locations = load_locations_with_coordinates(locations_file)
     print(f"\n✓ Loaded {len(locations)} location entries\n")
@@ -427,46 +449,53 @@ def process_images(input_folder, output_folder, locations_file):
                 skipped_count += 1
                 continue
             
-            # Extract GPS coordinates
-            lat, lon = get_gps_coordinates(exif)
-            
-            if lat and lon:
-                print(f"  ✓ GPS coordinates found: {lat:.4f}, {lon:.4f}")
-                
-                # Get city from coordinates
-                city = get_city_from_coordinates(lat, lon)
-                if city:
-                    print(f"  ✓ City from GPS: {city}")
-                else:
-                    print(f"  ⚠ Could not resolve city name from GPS")
+            # Check if this filename has a location override
+            if filename in filename_locations:
+                override_location = filename_locations[filename]
+                watermark_text = f"{year}, {override_location}"
+                print(f"  ✓ Location override found: {override_location}")
+                print(f"  ✓ Adding watermark: '{watermark_text}' (year + filename location override)")
             else:
-                print(f"  ⚠ No GPS coordinates in EXIF data")
-                city = None
-            
-            # Try to find matching location from locations.txt
-            matched_location = None
-            distance_km = None
-            if lat and lon:
-                matched_location, distance_km = find_closest_location(year, (lat, lon), locations, verbose=True)
-            
-            # Determine label: use location from file if < 100km, otherwise use GPS city
-            if matched_location and distance_km is not None and distance_km > 100:
-                print(f"  ⚠ Matched location is {distance_km:.1f} km away (>100 km threshold)")
-                if city:
+                # Extract GPS coordinates
+                lat, lon = get_gps_coordinates(exif)
+
+                if lat and lon:
+                    print(f"  ✓ GPS coordinates found: {lat:.4f}, {lon:.4f}")
+
+                    # Get city from coordinates
+                    city = get_city_from_coordinates(lat, lon)
+                    if city:
+                        print(f"  ✓ City from GPS: {city}")
+                    else:
+                        print(f"  ⚠ Could not resolve city name from GPS")
+                else:
+                    print(f"  ⚠ No GPS coordinates in EXIF data")
+                    city = None
+
+                # Try to find matching location from locations.txt
+                matched_location = None
+                distance_km = None
+                if lat and lon:
+                    matched_location, distance_km = find_closest_location(year, (lat, lon), locations, verbose=True)
+
+                # Determine label: use location from file if < 100km, otherwise use GPS city
+                if matched_location and distance_km is not None and distance_km > 100:
+                    print(f"  ⚠ Matched location is {distance_km:.1f} km away (>100 km threshold)")
+                    if city:
+                        watermark_text = f"{year}, {city}"
+                        print(f"  ✓ Adding watermark: '{watermark_text}' (using GPS city, file location too far)")
+                    else:
+                        watermark_text = f"{year}"
+                        print(f"  ✓ Adding watermark: '{watermark_text}' (year only, file location too far)")
+                elif matched_location:
+                    watermark_text = f"{year}, {matched_location}"
+                    print(f"  ✓ Adding watermark: '{watermark_text}' (year + location from file)")
+                elif city:
                     watermark_text = f"{year}, {city}"
-                    print(f"  ✓ Adding watermark: '{watermark_text}' (using GPS city, file location too far)")
+                    print(f"  ✓ Adding watermark: '{watermark_text}' (year + city from metadata)")
                 else:
                     watermark_text = f"{year}"
-                    print(f"  ✓ Adding watermark: '{watermark_text}' (year only, file location too far)")
-            elif matched_location:
-                watermark_text = f"{year}, {matched_location}"
-                print(f"  ✓ Adding watermark: '{watermark_text}' (year + location from file)")
-            elif city:
-                watermark_text = f"{year}, {city}"
-                print(f"  ✓ Adding watermark: '{watermark_text}' (year + city from metadata)")
-            else:
-                watermark_text = f"{year}"
-                print(f"  ✓ Adding watermark: '{watermark_text}' (year only, no location found)")
+                    print(f"  ✓ Adding watermark: '{watermark_text}' (year only, no location found)")
             
             # Add watermark
             watermarked_image = add_watermark(image, watermark_text)
@@ -511,6 +540,7 @@ Examples:
   %(prog)s ~/Pictures/vacation
   %(prog)s -l locations.txt ~/Pictures/vacation
   %(prog)s -l locations.txt -o output_folder ~/Pictures/vacation
+  %(prog)s -f filename_locations.txt ~/Pictures/vacation
         '''
     )
     
@@ -532,7 +562,14 @@ Examples:
         default='locations.txt',
         help='CSV file with year and location data (default: locations.txt)'
     )
-    
+
+    parser.add_argument(
+        '-f', '--filename-locations',
+        dest='filename_locations_file',
+        default=None,
+        help='CSV file mapping filename to location (format: filename, location). Photos listed here skip GPS lookup.'
+    )
+
     args = parser.parse_args()
     
     # Expand user path (e.g., ~/)
@@ -547,14 +584,23 @@ Examples:
     if not os.path.exists(locations_file):
         print(f"Error: Locations file '{locations_file}' not found.")
         return 1
-    
+
+    filename_locations_file = None
+    if args.filename_locations_file:
+        filename_locations_file = os.path.expanduser(args.filename_locations_file)
+        if not os.path.exists(filename_locations_file):
+            print(f"Error: Filename locations file '{filename_locations_file}' not found.")
+            return 1
+
     print(f"Input folder: {input_folder}")
     print(f"Output folder: {output_folder}")
     print(f"Locations file: {locations_file}")
+    if filename_locations_file:
+        print(f"Filename locations file: {filename_locations_file}")
     print("\nStarting photo watermarking process...")
     print("=" * 70 + "\n")
-    
-    process_images(input_folder, output_folder, locations_file)
+
+    process_images(input_folder, output_folder, locations_file, filename_locations_file)
     print("\nProcessing complete!")
     return 0
 

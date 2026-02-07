@@ -3,7 +3,7 @@
 2025, Roma
 2025, Venezia
 2025, Pisa
-2025, Sienna
+2025, Siena
 2025, Florence
 2025, Lisboa
 2025, New York
@@ -29,8 +29,10 @@
 2023, Cordoba
 2023, Samos
 2023, North Carolina
-2023, Fairview
+2023, Fairview - North Carolina
 2023, Ashville
 2023, Charlotte
 2023, Cayo Largo
 2023, Varadero
+2023, Bacunayagua
+2023, Habana
