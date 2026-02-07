@@ -1,4 +1,36 @@
 2025, Blue Ridge - Georgia
+2025, Georgia
 2025, Roma
 2025, Venezia
 2025, Pisa
+2025, Sienna
+2025, Florence
+2025, Lisboa
+2025, New York
+2025, Aventura,
+2025, Miami
+2025, Marco Island
+2024, Blue Ridge - Georgia
+2024, New York
+2024, Georgia
+2024, Miami
+2024, Madrid
+2024, Sevilla
+2024, Granada
+2024, Cordoba
+2024, Malaga
+2024, Valencia
+2024, Varadero
+2023, Madrid,
+2023, Lugo
+2023, A Coruña
+2023, Santiago de Compostela
+2023, Astorga
+2023, Cordoba
+2023, Samos
+2023, North Carolina
+2023, Fairview
+2023, Ashville
+2023, Charlotte
+2023, Cayo Largo
+2023, Varadero
