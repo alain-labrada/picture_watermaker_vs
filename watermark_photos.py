@@ -158,21 +158,22 @@ def get_coordinates_for_city(city_name):
     return None, None
 
 def find_closest_location(year, photo_city, photo_coords, locations, verbose=False):
-    """Find the closest location from locations.txt based on year and proximity."""
+    """Find the closest location from locations.txt based on year and proximity.
+    Returns tuple: (location_name, distance_km) or (None, None)"""
     if not year or not locations:
-        return None
+        return None, None
     
     # Filter locations by year
     year_matches = [loc for yr, loc in locations if yr == year]
     
     if not year_matches:
-        return None
+        return None, None
     
     # If only one match, return it
     if len(year_matches) == 1:
         if verbose:
             print(f"  → Only one location for {year}: {year_matches[0]}")
-        return year_matches[0]
+        return year_matches[0], None
     
     # If we have photo coordinates, find the closest location
     if photo_coords and photo_coords[0] is not None:
@@ -196,12 +197,12 @@ def find_closest_location(year, photo_city, photo_coords, locations, verbose=Fal
         if closest_location:
             if verbose:
                 print(f"  → Closest: {closest_location} ({min_distance:.1f} km)")
-            return closest_location
+            return closest_location, min_distance
     
     # If we can't determine by distance, return the first match
     if verbose:
         print(f"  → Using first match for {year}: {year_matches[0]}")
-    return year_matches[0]
+    return year_matches[0], None
 
 def add_watermark(image, text, position='bottom-left'):
     """Add watermark text with white letters, black outline, and shadow."""
@@ -319,11 +320,20 @@ def process_images(input_folder, output_folder, locations_file):
             
             # Try to find matching location from locations.txt
             matched_location = None
+            distance_km = None
             if lat and lon:
-                matched_location = find_closest_location(year, city, (lat, lon), locations, verbose=True)
+                matched_location, distance_km = find_closest_location(year, city, (lat, lon), locations, verbose=True)
             
-            # Determine label: prefer matched location from file, fallback to GPS city
-            if matched_location:
+            # Determine label: use location from file if < 100km, otherwise use GPS city
+            if matched_location and distance_km is not None and distance_km > 100:
+                print(f"  ⚠ Matched location is {distance_km:.1f} km away (>100 km threshold)")
+                if city:
+                    watermark_text = f"{year}, {city}"
+                    print(f"  ✓ Adding watermark: '{watermark_text}' (using GPS city, file location too far)")
+                else:
+                    watermark_text = f"{year}"
+                    print(f"  ✓ Adding watermark: '{watermark_text}' (year only, file location too far)")
+            elif matched_location:
                 watermark_text = f"{year}, {matched_location}"
                 print(f"  ✓ Adding watermark: '{watermark_text}' (year + location from file)")
             elif city:
