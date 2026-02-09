@@ -1,0 +1,34 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Watermark: with all options",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/watermark_photos.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-l", "locations.txt",
+                "-f", "filename_locations.txt",
+                "-o", "~/Pictures/landscape/output",
+                "~/Pictures/landscape"
+            ]
+        },
+        {
+            "name": "Watermark: basic (prompt for args)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/watermark_photos.py",
+            "console": "integratedTerminal",
+            "args": "${command:pickArgs}"
+        }
+    ],
+    "inputs": [
+        {
+            "id": "inputFolder",
+            "type": "promptString",
+            "description": "Path to folder containing photos to watermark",
+            "default": "~/Pictures/vacation"
+        }
+    ]
+}
