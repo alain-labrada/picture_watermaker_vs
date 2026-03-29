@@ -24,10 +24,10 @@ The tool handles differences in how iPhone and Samsung store photo metadata:
 - **GPS reference values**: Handles both string and bytes-encoded N/S/E/W references
 - **Photo orientation**: Applies EXIF orientation transform so portrait photos are not saved as landscape
 
-## Setup
+# Setup (first time only)
 
-1. Install dependencies:
-```bash
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 

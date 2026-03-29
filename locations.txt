@@ -36,3 +36,13 @@
 2023, Varadero
 2023, Bacunayagua
 2023, Habana
+2026, Taormina
+2026, Roma
+2026, Positano
+2026, Amalfi
+2026, Capri
+2026, Ravello
+2026, Sorrento
+2026, Massa Lubrense
+2026, Motta Camastra
+2026, Pompeya
